@@ -1,0 +1,3 @@
+*.pyc
+autogp/util/tf_ops/matpackops.so
+*.DS_Store
