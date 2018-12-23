@@ -15,7 +15,7 @@ This is the main class implementing the GGP (Grouped Gaussian Process) model. Im
 GaussianProcess:  
 Based on the original class from AutoGP, with independent latent functions, but augmented to also have the extended functionality of the LinkGaussianProcess class. Compatable likelihood models are coregion.py, regression_network_q.py (user defined q), gaussian.py.
 
-#Requirements
+# Requirements
 Requires Python 3, Tensorflow 1.1-1.3
 NB Adjust setup.py for compiler settings - currently hardcoded for gcc4 compatability to support triangular matrix ops code from GPflow (see acknowledgements).
 
