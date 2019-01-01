@@ -24,7 +24,7 @@ Where functions are independent i.e. in own block, set link_kernel[i] = link_inp
 
 Data for example: 
  - normalised solar data for 10 sites for 15 minute forecast
- - N_train = 5000, N_test = 3636, P = 10, D = 31
+ - N_train = 3000, N_test = 2000, P = 10, D = 31
  - Xtr[:, :30] 3 recent lagged observations for each site in order
  - Xtr[:, 30] time index
  - link inputs is a 10x2 array (link inputs repeated for every group) 
