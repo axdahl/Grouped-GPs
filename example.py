@@ -52,7 +52,6 @@ from autogp import datasets
 from autogp import losses
 from autogp  import util
 
-
 dpath = '/path/to/pickle/data'  # user update
 
 dfile = 'example_gprn_inputsdict.pickle'
@@ -96,14 +95,14 @@ IS_ARD = FLAGS.is_ard
 TOL = FLAGS.opt_tol
 VAR_STEPS = FLAGS.var_steps
 DIAG_POST = FLAGS.diag_post
-PRED_SAMPLES = FLAGS.pred_samples
+PRED_SAMPLES = FLAGS.mc_test
 NLPDS = FLAGS.save_nlpds
 
 MAXTIME = 300
 
 # define GPRN P and Q
-output_dim = 6 #P
-node_dim = 6    #Q
+output_dim = 10 #P
+node_dim = 10    #Q
 lag_dim = 3  # for parsing lag features for individual latent functions
 
 # extract dataset
