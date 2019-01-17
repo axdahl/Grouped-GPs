@@ -57,7 +57,6 @@ class LinkGaussianProcess(object):
                  diag_post=True,
                  num_samples=100,
                  predict_samples=1000):
-
         self.likelihood = likelihood_func
         self.kernels = kernel_funcs
         self.kern_links = link_kernel_funcs
@@ -75,10 +74,10 @@ class LinkGaussianProcess(object):
         self.num_block = len(self.kern_links)
         self.ell_samples = num_samples
         self.num_inducing = inducing_inputs.shape[1]
-        self.block_struct = block_struct 
+        self.block_struct = block_struct  
         self.input_dim = inducing_inputs.shape[2]
         self.output_dim = output_dim
-        self.predict_samples = predict_samples
+        self.predict_samples = predict_samples #not argument at present.
         self.link_inputs = [tf.constant(x, dtype = tf.float32) for x in link_inputs]
 
         # Define all parameters that get optimized directly in raw form. Some parameters get
@@ -89,6 +88,7 @@ class LinkGaussianProcess(object):
         if self.diag_post:
             self.raw_covars = tf.Variable(tf.ones([self.num_components, self.num_latent,
                                                    self.num_inducing]))
+            #TODO (Ast) double check if need this
             self.raw_link_covars = tf.Variable(tf.zeros([1]), trainable = False)
 
         else:
@@ -100,9 +100,6 @@ class LinkGaussianProcess(object):
                                 [int(x) for x in util.tri_vec_shape(len(max(self.block_struct, key=len)))], dtype=np.float32)
             self.raw_link_covars = tf.Variable(init_linkvec)
 
-
-
-        
 
         self.raw_inducing_inputs = tf.Variable(inducing_inputs, dtype=tf.float32)
         self.raw_likelihood_params = self.likelihood.get_params()
@@ -120,7 +117,6 @@ class LinkGaussianProcess(object):
         self.test_outputs = tf.placeholder(tf.float32, shape=[None, None],
                                           name="test_outputs")
 
-        # Now build our computational graph.
         self.nelbo, self.predictions, self.general_nlpd = self._build_graph(self.raw_weights,
                                                                         self.raw_means,
                                                                         self.raw_covars,
@@ -137,7 +133,7 @@ class LinkGaussianProcess(object):
         self.optimizer = None
         self.train_step = None
 
-    def fit(self, data, optimizer, var_steps=10, epochs=200,
+    def fit(self, data, optimizer, loo_steps=10,  var_steps=10, epochs=200,
             batch_size=200, display_step=1, test=None, loss=None, tolerance = None, max_time=300):
         """ 
         Fit the Gaussian process model to the given data.
@@ -233,7 +229,6 @@ class LinkGaussianProcess(object):
                     old_nelbo = new_nelbo
                 batch_counter += 1
                 print('batch_counter = ',batch_counter)
-
 
     def predict(self, test_inputs, batch_size=100):
         """ 
@@ -349,15 +344,14 @@ class LinkGaussianProcess(object):
 
         return nlpds, nlpds_meanvar
 
-
     def _print_state(self, data, test, loss, num_train, batch_size, fit_stime, batch_stime):
         batch_time = round((time.time() - batch_stime),3)
         fit_runtime = round((time.time() - fit_stime)/60,4)
         print("batch runtime: ", batch_time, " sec")
         print("fit runtime: ", fit_runtime, " min")
         nelbo_stime = time.time()
-        if num_train <= 100000 or batch_size is not None:
-            num_batches = round(num_train/batch_size) 
+        if num_train <= 100000 or batch_size is not None: 
+            num_batches = round(num_train/batch_size)
             nelbo_inputs = np.array_split(data.X, num_batches)
             nelbo_outputs = np.array_split(data.Y, num_batches)
             nelbo_batches = util.init_list(0.0, [num_batches])
@@ -459,16 +453,14 @@ class LinkGaussianProcess(object):
                         mats_in[r] = mats_in[r][:len(self.block_struct[r]), :len(self.block_struct[r])]
 
                 link_covars[i] = mats_in
-                                    
         
         # Both inducing inputs and the posterior means can vary freely so don't change them.
         means = raw_means
         inducing_inputs = raw_inducing_inputs
 
         # Build the matrices of covariances between inducing inputs.
-
         kernel_mat = [self.kernels[r].kernel(inducing_inputs[r, :, :])
-                      for r in range(self.num_block)] 
+                      for r in range(self.num_block)]
         kernel_chol = [tf.cholesky(k) for k in kernel_mat]
 
         # generate K(j,j') for each block of latent functions
@@ -481,7 +473,6 @@ class LinkGaussianProcess(object):
             else:
                 kernlink_mat[r] = self.kern_links[r].kernel(self.link_inputs[r])
                 kernlink_chol[r] = tf.cholesky(kernlink_mat[r])
-
 
         # Now build the objective function.
         entropy = self._build_entropy(weights, means, covars, link_covars)
@@ -499,19 +490,16 @@ class LinkGaussianProcess(object):
                                         kernel_chol, kernlink_chol, kernlink_mat, test_inputs, test_outputs)
         return nelbo, predictions, general_nlpd
 
-
     def _build_predict(self, weights, means, covars, link_covars, inducing_inputs,
                        kernel_chol, kernlink_chol, kernlink_mat, test_inputs):
-        kern_prods, kern_sums = self._build_interim_vals(kernel_chol, kernlink_chol,
-                                                        kernlink_mat,
-                                                        inducing_inputs, test_inputs)
+        kern_prods, kern_sums = self._build_interim_vals(kernel_chol, inducing_inputs, test_inputs)
         pred_means = util.init_list(0.0, [self.num_components])
         pred_vars = util.init_list(0.0, [self.num_components])
         for i in range(self.num_components):
             covar_input = covars[i, :, :] if self.diag_post else covars[i, :, :, :]
             link_cov_input = None if self.diag_post else link_covars[i] # list of R covar link mats (each Qr x Qr)
             # Note (Ast) generate f|lambda distribution parameters
-            latent_samples = self._build_samples(kern_prods, kern_sums,
+            latent_samples = self._build_samples(kern_prods, kern_sums, kernlink_chol,
                                                  means[i, :, :], covar_input, link_cov_input, self.predict_samples)
             # reorder latent according to 'inverted' block struct order
             latent_j = [j for r in self.block_struct for j in r] #implicit order of j in latent_samples
@@ -539,13 +527,11 @@ class LinkGaussianProcess(object):
         lpd_all = tf.zeros([self.predict_samples, tf.shape(test_inputs)[0], self.output_dim])
         #lpd = 0
         dim_out = self.output_dim
-        kern_prods, kern_sums = self._build_interim_vals(kernel_chol, kernlink_chol,
-                                                        kernlink_mat,
-                                                        inducing_inputs, test_inputs)
+        kern_prods, kern_sums = self._build_interim_vals(kernel_chol, inducing_inputs, test_inputs)
         for i in range(self.num_components):
             covar_input = covars[i, :, :] if self.diag_post else covars[i, :, :, :]
             link_cov_input = None if self.diag_post else link_covars[i] # list of R covar link mats (each Qr x Qr)
-            latent_samples = self._build_samples(kern_prods, kern_sums,
+            latent_samples = self._build_samples(kern_prods, kern_sums, kernlink_chol,
                                                 means[i, :, :], covar_input, link_cov_input, self.predict_samples)
             # reorder latent according to 'inverted' block struct order
             latent_j = [j for b in self.block_struct for j in b] #implicit order of j in latent_samples
@@ -561,30 +547,31 @@ class LinkGaussianProcess(object):
         log_normal_probs = util.init_list(0.0, [self.num_components, self.num_components])
         for i in range(self.num_components):
             for j in range(i, self.num_components):
-                # TODO (Ast) non diag: loop over r instead of k; new means, covars objects variable dims
-                # need diag_post or kron(S) structure
                 if self.diag_post:
                     for k in range(self.num_latent):   
                         normal = util.DiagNormal(means[i, k, :], covars[i, k, :] +
                                                                  covars[j, k, :])               
                         log_normal_probs[i][j] += normal.log_prob(means[j, k, :])
-
                 else:
                     for r in range(self.num_block):
                         if i == j:
-                            # Compute chol(2S) = sqrt(2)*chol(S).
-                            chol_s = util.kronecker_mul(link_covars[i][r], covars[i, r, :, :])
-                            covars_sum = tf.sqrt(2.0) * chol_s
+                            # Compute log normal where mean_i == mean_j
+                            dim_block = len(self.block_struct[r])
+                            dim = self.num_inducing * dim_block
+                            log_det = dim * tf.log(2.0) + self.num_inducing * util.log_cholesky_det(link_covars[i][r]) + \
+                                        dim_block * util.log_cholesky_det(covars[i, r, :, :])
+                            log_normal_probs[i][j] += -0.5 * (dim * tf.log(2.0 * np.pi) + log_det)
 
                         else:
+                            # TODO(ast): block inversion loop to avoid kron objects
                             chol_i = util.kronecker_mul(link_covars[i][r], covars[i, r, :, :])
                             chol_j = util.kronecker_mul(link_covars[j][r], covars[j, r, :, :])
-                            covars_sum = tf.cholesky(chol_i + chol_j)
+                            covars_sum = tf.cholesky(util.mat_square(chol_i) + util.mat_square(chol_j))
 
-                        mean_i = tf.concat([means[i, k, :] for k in self.block_struct[r]], axis=0)
-                        mean_j = tf.concat([means[j, k, :] for k in self.block_struct[r]], axis=0)
-                        normal = util.CholNormal(mean_i, covars_sum)
-                        log_normal_probs[i][j] += normal.log_prob(mean_j)
+                            mean_i = tf.concat([means[i, k, :] for k in self.block_struct[r]], axis=0)
+                            mean_j = tf.concat([means[j, k, :] for k in self.block_struct[r]], axis=0)
+                            normal = util.CholNormal(mean_i, covars_sum)
+                            log_normal_probs[i][j] += normal.log_prob(mean_j)
 
         # Now compute the entropy.
         entropy = 0.0
@@ -601,42 +588,57 @@ class LinkGaussianProcess(object):
         return entropy
         
     def _build_cross_ent(self, weights, means, covars, link_covars, kernel_chol, kernlink_chol):
-        # TODO change of full covar_r definition
         cross_ent = 0.0
         for i in range(self.num_components):
             sum_val = 0.0
             for r in range(self.num_block):
-                # construct chol(Kjj kron Kzz)
-                block_chol_r = util.kronecker_mul(kernlink_chol[r], kernel_chol[r])
-                if self.diag_post:
-                    # construct block diag_post using link_covars
-                    covars_r = tf.diag(tf.concat([covars[i,j,:] for j in self.block_struct[r]], axis=0))
-                    trace = tf.trace(tf.cholesky_solve(block_chol_r, covars_r))
-                 
+                dim_block = len(self.block_struct[r])
+                # construct Khh^-1
+                if dim_block == 1:
+                    # convert float dummy==1.0 to rank 2 tensor
+                    Khh_inv = tf.expand_dims(tf.expand_dims(kernlink_chol[r], 0), 1)
+                    log_det = util.log_cholesky_det(kernel_chol[r])
                 else:
-                    covars_r = util.kronecker_mul(link_covars[i][r], covars[i, r, :, :])
-                    trace = tf.reduce_sum(util.diag_mul(
-                                tf.cholesky_solve(block_chol_r, covars_r),
-                                tf.transpose(covars_r)))
-                
-                mean_r = tf.concat([means[i,j,:] for j in self.block_struct[r]], axis=0)
-                sum_val += (util.CholNormal(mean_r, block_chol_r).log_prob(0.0) -
-                            0.5 * trace)
+                    Khh_inv = tf.cholesky_solve(kernlink_chol[r], tf.eye(dim_block))
+                    # construct ln|Kr_uu|
+                    log_det = self.num_inducing * util.log_cholesky_det(kernlink_chol[r]) + \
+                                dim_block * util.log_cholesky_det(kernel_chol[r])
 
-            cross_ent += weights[i] * sum_val
+                # calculate m_r'(Kuu^-1)m_r
+                means_r = [tf.expand_dims(means[i,j,:],1) for j in self.block_struct[r]]
+                quad_form = 0.0
+                for j in range(dim_block):
+                    sum_means = tf.add_n([Khh_inv[j,h] * means_r[h] for h in range(dim_block)])
+                    quad_form += tf.reduce_sum(means_r[j] * tf.cholesky_solve(kernel_chol[r], sum_means))
 
-        return cross_ent
+                # calculate trace[(Kuu^-1)Sk_r]
+                if self.diag_post:
+                    # where Sk_r diagonal, trace reduces to sum of diagonal inner products over j in block r,
+                    # scaled by Khh_inv[j,j]
+                    diag_inv = tf.diag_part(tf.cholesky_solve(kernel_chol[r], tf.eye(self.num_inducing)))
+                    cov_diag = [covars[i,j,:] for j in self.block_struct[r]]
+                    trace = tf.reduce_sum(diag_inv * tf.add_n([Khh_inv[j,j] * cov_diag[j] for j in range(dim_block)]))
+
+                else:
+                    trace = tf.trace(tf.matmul(Khh_inv, tf.matmul(link_covars[i][r], link_covars[i][r], transpose_b=True))) * \
+                            tf.trace(tf.matmul(tf.cholesky_solve(kernel_chol[r], covars[i, r, :, :]), covars[i, r, :, :],
+                                transpose_b=True))
+
+                sum_val += dim_block * self.num_inducing * tf.log(2.0 * np.pi) + log_det + quad_form + trace
+
+            cross_ent += -0.5 * weights[i] * sum_val
+
+        return  cross_ent
 
     def _build_ell(self, weights, means, covars, link_covars, inducing_inputs,
                    kernel_chol, kernlink_chol, kernlink_mat, train_inputs, train_outputs):
-        kern_prods, kern_sums = self._build_interim_vals(kernel_chol, kernlink_chol,
-                                                        kernlink_mat,
-                                                        inducing_inputs, train_inputs)
+        # generate `within' kernel auxiliary matrices
+        kern_prods, kern_sums = self._build_interim_vals(kernel_chol, inducing_inputs, train_inputs)
         ell = 0
         for i in range(self.num_components):
             covar_input = covars[i, :, :] if self.diag_post else covars[i, :, :, :]
             link_cov_input = None if self.diag_post else link_covars[i] # list of R covar link mats (each Qr x Qr)
-            latent_samples = self._build_samples(kern_prods, kern_sums,
+            latent_samples = self._build_samples(kern_prods, kern_sums, kernlink_chol,
                                                  means[i, :, :], covar_input, link_cov_input, self.ell_samples)
             # reorder latent according to 'inverted' block struct order
             latent_j = [j for b in self.block_struct for j in b] #implicit order of j in latent_samples
@@ -648,94 +650,88 @@ class LinkGaussianProcess(object):
 
         return ell / self.ell_samples
 
-    def _build_interim_vals(self, kernel_chol, kernlink_chol, 
-                            kernlink_mat, inducing_inputs, train_inputs):
+    def _build_interim_vals(self, kernel_chol, inducing_inputs, train_inputs):
         kern_prods = util.init_list(0.0, [self.num_block])
         kern_sums = util.init_list(0.0, [self.num_block])
         for r in range(self.num_block):
-            ind_train_kern = util.kronecker_mul(kernlink_mat[r], 
-                            self.kernels[r].kernel(inducing_inputs[r, :, :], train_inputs))
+            # Compute A = Kxz.Kzz^(-1) = (Kzz^(-1).Kzx)^T.
+            ind_train_kern = self.kernels[r].kernel(inducing_inputs[r, :, :], train_inputs)
+            kern_prods[r] = tf.transpose(tf.cholesky_solve(kernel_chol[r], ind_train_kern))
 
-            # Compute A = Kfu.Kuu^(-1) = (Kuu^(-1).Kuf)^T.
-            block_chol = util.kronecker_mul(kernlink_chol[r], kernel_chol[r])
-            kern_prods[r] = tf.transpose(tf.cholesky_solve(block_chol, ind_train_kern))
+            # Compute diagonal elements of Kxx - AKzx
+            kern_sums[r] = (self.kernels[r].diag_kernel(train_inputs) -
+                            util.diag_mul(kern_prods[r], ind_train_kern))
 
-            # Compute Kff - AKuf
-            kern_sums[r] = util.kronecker_mul(kernlink_mat[r], 
-                            self.kernels[r].kernel(train_inputs)) - tf.matmul(kern_prods[r], ind_train_kern)
-            
+        # kern_prods list of R NxM matrices; kern_sums list of R vectors length N
         return kern_prods, kern_sums
 
-    def _build_samples(self, kern_prods, kern_sums, means, covars, link_covars, num_samples):
-        sample_means, sample_vars = self._build_sample_info(kern_prods, kern_sums, means, covars, link_covars)
-        
+    def _build_samples(self, kern_prods, kern_sums, kernlink_chol, means, covars, link_covars, num_samples):
+        """
+        Construct samples from posterior f(n) by adding two independent samples
+        TODO(Ast) fix description
+        sample_quad = b_n + (A_n.chol(S)).raw_norm  dim=[SxNxQr]
+        sample_prior = 0 + chol(Khh)kern_sum(n).raw_norm dim=[SxNxQr]
+
+        block_samples for block r = sample_quad + sample_prior
+        """
+
+        # `within' mean and quad variance component
+        sample_means, sample_var_quad = self._build_sample_info(kern_prods, 
+                                                                    means, 
+                                                                    covars)
         block_samples = util.init_list(0.0, [self.num_block])
         for r in range(self.num_block):
-            sample_means_r = sample_means[r]
-            sample_chols_r = tf.tile(tf.expand_dims(sample_vars[r], axis = 1), multiples=[1,num_samples,1,1])
-            batch_size = tf.shape(sample_means_r)[0]
-            raw_norm = tf.random_normal([batch_size, num_samples, len(self.block_struct[r]), 1]) # shape = [N,S,Q_r,1]
-            # scale raw samples - premultiply (Q_rx1) by chol(Q_rxQ_r) for each N,S - and return to shape = [S,N,Q_r]
-            block_samples[r] = tf.squeeze(sample_means_r, axis=2) + tf.transpose(tf.squeeze(
-                                                            tf.matmul(sample_chols_r, raw_norm), axis=3), perm=[1,0,2])
+            batch_size = tf.shape(sample_means[r])[0]
+            # sample from quad form
+            if self.diag_post:
+                sample_quad = sample_means[r] + tf.sqrt(sample_var_quad[r]) * \
+                tf.random_normal([num_samples, batch_size, len(self.block_struct[r])])
+            else:
+                #TODO(Ast) tf.matmul doesn't support broadcasting - better options than expanding Chol?
+                # construct batch premultiplier SxNxQrxQr
+                premul = tf.tile(tf.reshape(tf.sqrt(sample_var_quad[r]), [1, batch_size, 1, 1]), 
+                                multiples=[num_samples,1,1,1])
+                premul = premul * tf.reshape(link_covars[r], [1, 1, len(self.block_struct[r]), len(self.block_struct[r])])
+
+                sample_quad = (sample_means[r] + tf.squeeze(tf.matmul(premul, 
+                                tf.random_normal([num_samples, batch_size, len(self.block_struct[r]), 1])), axis=[3]))
+
+            # sample from K_tilde (prior)
+            premul_prior = tf.tile(tf.reshape(tf.sqrt(kern_sums[r]), [1, batch_size, 1, 1]), 
+                                multiples=[num_samples,1,1,1])
+            premul_prior = premul_prior * tf.reshape(kernlink_chol[r], 
+                                                [1, 1, len(self.block_struct[r]), len(self.block_struct[r])])
+            sample_prior = tf.squeeze(tf.matmul(premul_prior,
+                tf.random_normal([num_samples, batch_size, len(self.block_struct[r]), 1])), axis=[3]) # SxNxQr
+
+            block_samples[r] = sample_quad + sample_prior
 
         return tf.concat(block_samples, axis=2)
-
-
         
-    def _build_sample_info(self, kern_prods, kern_sums, means, covars, link_covars):
-        # Generate posterior mean and covariance matrix for each block R.
-        post_means = util.init_list(0.0, [self.num_block])
-        post_vars = util.init_list(0.0, [self.num_block])
-        r_n_submeans = util.init_list(0.0, [self.num_block])
+    def _build_sample_info(self, kern_prods, means, covars):
+        # Generate posterior mean and quad covariance matrix for each block r.
         sample_means = util.init_list(0.0, [self.num_block])
+        post_vars = util.init_list(0.0, [self.num_block])
+
         for r in range(self.num_block):
+            dim_block = len(self.block_struct[r])
+
+            # Construct sample means for latent function j in block r i.e. Kxz.Kzz^-1.m_j
+            # and concat into N x Q_r matrix for each block r
+            means_r = [tf.expand_dims(means[j,:],1) for j in self.block_struct[r]]
+            sample_means[r] = tf.concat([tf.matmul(kern_prods[r], means_r[j]) for j in range(dim_block)], axis=1)
+
+            # Construct `within' latent function component of quad_form sample covariances
             if self.diag_post:
-                covars_r = tf.diag(tf.concat([covars[j,:] for j in self.block_struct[r]], axis=0))
-                quad_form = tf.matmul(tf.matmul(kern_prods[r], covars_r), kern_prods[r], transpose_b = True)
-                
+                # list of Kxz.Kzz^-1 . S_j. (Kxz.Kzz^-1)' for j in block r
+                # and concat into N x Q_r matrix for each block r
+                post_vars[r] = tf.stack([util.diag_mul(kern_prods[r] * covars[j, :],
+                            tf.transpose(kern_prods[r])) for j in self.block_struct[r]], axis=1)
             else:
-                covars_r_chol = util.kronecker_mul(link_covars[r], covars[r,: ,:])
-                covars_r = tf.matmul(covars_r_chol, covars_r_chol, transpose_b = True)
-                quad_form = tf.matmul(tf.matmul(kern_prods[r], covars_r), tf.transpose(kern_prods[r]))
-            
+                # a single `within' quad form per block Nx1
+                covars_r = tf.matmul(covars[r, :, :], covars[r, :, :], transpose_b = True)
+                post_vars[r] = tf.expand_dims(util.diag_mul(tf.matmul(kern_prods[r], covars_r),
+                                          tf.transpose(kern_prods[r])), 1)
 
-            post_means[r] = tf.matmul(kern_prods[r], 
-                            tf.concat([tf.expand_dims(means[j, :], 1) for j in self.block_struct[r]], axis=0))
-            post_vars[r] = kern_sums[r] + quad_form
-
-            # Construct sampling mean and covariance b_kn, COV_kn for each n
-
-            # gather and concat m_n for all n in m in post_means
-            # split block mean vector into latent function mean vectors for each block r #returns nested list
-            r_n_submeans[r] = tf.split(post_means[r], len(self.block_struct[r]))
-            # change dims and concat into n x qr matrix of means for each block
-            sample_means[r] = tf.concat([tf.expand_dims(j,axis=1) for j in r_n_submeans[r]], axis = 1)
-
-
-        # gather covar submatrices for n for each r, combine to make N jxj block diag matrices
-        sample_vars = util.init_list(0.0, [self.num_block])
-        for r in range(self.num_block):
-            # extract submatrices j of block r in row order [[j11, j12,...,], [j21, j22,...], etc]
-            row_submats = tf.split(post_vars[r], len(self.block_struct[r]), axis=0)
-            submats_r = util.init_list(0.0, [len(self.block_struct[r])])
-            for j in range(len(row_submats)):
-                submats_r[j] = tf.split(row_submats[j], len(self.block_struct[r]), axis = 1)
-            subdiags_r = util.init_list(0.0, [ len(self.block_struct[r]), len(self.block_struct[r]) ])
-            for i in range(len(self.block_struct[r])):
-                for j in range(len(self.block_struct[r])):
-                    subdiags_r[i][j] = tf.expand_dims(tf.diag_part(submats_r[i][j]), axis = 0)
-                subdiags_r[i] = tf.concat([subdiags_r[i][k] for k in range(len(self.block_struct[r]))], axis = 0) # q_r x n
-            sample_vars[r] = tf.stack(subdiags_r, axis = 0) # q_r x q_r x n
-            sample_vars[r] = tf.transpose(sample_vars[r], perm=[2,0,1]) # q_r x q_r x n to n x q_r x q_r
-
-            jitter_diag = 0.001*tf.diag( tf.ones([ len(self.block_struct[r]) ]))
-            jitter_full = 0.0001*tf.ones( [len(self.block_struct[r]), len(self.block_struct[r])] )
-
-            sample_vars[r] = tf.cholesky(sample_vars[r] + jitter_diag + jitter_full)
-
-        # sample_means = N x Q, sample_vars = N x Q x Q
-        # returns means and covars implicitly in block_struct order (Q = q_r, q_r, ...) and q_r = r_j_i1, r_j_i2, ...
-        # where i1, i2 etc are order in range(len(block_struct[r]))
-        return sample_means, sample_vars    
-
+        # sample_means list of NxQ_r; post_vars list of NxQ_r (diag post) or Nx1 (kron post) for r in R.
+        return sample_means, post_vars
