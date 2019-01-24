@@ -1,6 +1,6 @@
 
 # Grouped-GPs  (Author: Astrid Dahl)
-This repo contains a generalised sparse variational inference class that implements dependent latent function models (as described in [Grouped Gaussian Processes for Solar Forecasting](https://arxiv.org/abs/1806.02543)).
+This repo contains a generalised sparse variational inference class that implements dependent latent function models (as described in [Grouped Gaussian Processes for Solar Power Prediction](https://arxiv.org/abs/1806.02543)).
 The package is based on AutoGP (see Acknowledgements) and adds the LinkGaussianProcess class for dependent latent GP models and augmented functionality for all classes including
 - coregional and GPRN likelihood models for GaussianProcess and LinkGaussianProcess classes
 - composite kernels and feature subset indexing
